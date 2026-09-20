@@ -1,8 +1,24 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+// 签名凭据从根目录 keystore.properties（不纳入版本控制）读取，避免明文密码泄露。
+// 也可通过环境变量 KEYSTORE_PASSWORD / KEY_PASSWORD 提供（CI 场景）；
+// 两者都没有时 release 走未签名产物（不会中断构建）。
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+}
+val releaseStorePassword = keystoreProperties.getProperty("storePassword")
+    ?: System.getenv("KEYSTORE_PASSWORD")
+val releaseKeyPassword = keystoreProperties.getProperty("keyPassword")
+    ?: System.getenv("KEY_PASSWORD")
+val hasReleaseKeystore = !releaseStorePassword.isNullOrBlank() && !releaseKeyPassword.isNullOrBlank()
 
 android {
     namespace = "io.github.wzhdgithub.tempmailui.demo"
@@ -16,10 +32,27 @@ android {
         versionName = "1.0.0"
     }
 
+    if (hasReleaseKeystore) {
+        signingConfigs {
+            create("release") {
+                // storeFile 相对本模块目录解析
+                storeFile = file(keystoreProperties.getProperty("storeFile", "keystore.jks"))
+                storePassword = releaseStorePassword
+                keyAlias = keystoreProperties.getProperty("keyAlias", "tempmailui")
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
+        // debug 也用同一把钥匙：debug / release 可互相覆盖安装，避免"应用未安装"
+        debug {
+            if (hasReleaseKeystore) signingConfig = signingConfigs.getByName("release")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            if (hasReleaseKeystore) signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
